@@ -23,6 +23,14 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
 .up{color:var(--up)}.down{color:var(--down)}
 .meta{color:var(--mute);font-size:13px;margin-top:14px}
 .err{color:var(--down)}
+.row{cursor:pointer}.row.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
+.row:focus-visible{outline:2px solid var(--acc)}
+.chart{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px}
+.ch-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px}
+#ct{font:600 20px Georgia,serif}#cp{font:600 18px ui-monospace,Consolas,monospace;margin-left:10px}#cc{font-size:14px;font-weight:600;margin-left:8px}
+#cv{position:relative;min-height:260px}#cv svg{width:100%;height:auto;display:block;touch-action:none}
+.tip{position:absolute;top:0;pointer-events:none;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;white-space:nowrap;transform:translateX(-50%)}
+.cmsg{color:var(--mute);padding:90px 0;text-align:center;font-size:14px}
 @media(max-width:520px){.row{grid-template-columns:1fr 1fr}.chg{grid-column:1/-1;text-align:left}}
 </style>
 </head>
@@ -30,18 +38,28 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
 <main>
 <header>
   <h1>Live Prices</h1>
-  <div class="sw" role="group" aria-label="Currency">
+  <div class="sw" id="cur" role="group" aria-label="Currency">
     <button data-c="USD" aria-pressed="true">USD</button>
     <button data-c="EUR" aria-pressed="false">EUR</button>
     <button data-c="CZK" aria-pressed="false">CZK</button>
   </div>
 </header>
+<section class="chart">
+  <div class="ch-head"><div><span id="ct"></span><span id="cp"></span><span id="cc"></span></div>
+  <div class="sw" id="rng" role="group" aria-label="Time range">
+    <button data-r="1H" aria-pressed="false">1H</button><button data-r="1D" aria-pressed="true">1D</button>
+    <button data-r="1W" aria-pressed="false">1W</button><button data-r="1M" aria-pressed="false">1M</button>
+    <button data-r="1Y" aria-pressed="false">1Y</button>
+  </div></div>
+  <div id="cv"></div>
+</section>
 <div id="list"></div>
 <p class="meta" id="meta">Loading…</p>
 </main>
 <script>
 // ====== CONFIG: edit here ======
-const FINNHUB_KEY = "db1jr71r01qhkqhbqehgdb1jr71r01qhkqhbqei0"; // free at finnhub.io
+const FINNHUB_KEY = "PASTE_YOUR_FINNHUB_KEY_HERE"; // free at finnhub.io
+const TWELVE_KEY = "PASTE_YOUR_TWELVEDATA_KEY_HERE"; // free at twelvedata.com (stock history)
 const CRYPTO = [ // id = CoinGecko id
   {sym:"BTC", name:"Bitcoin",  id:"bitcoin"},
   {sym:"ETH", name:"Ethereum", id:"ethereum"},
@@ -68,7 +86,7 @@ function render(){
     const p = d.usd!=null && rate ? d.usd*rate : null;
     const ch = d.chg;
     const cls = ch==null ? "" : ch>=0 ? "up" : "down";
-    return `<div class="row"><div><div class="sym">${a.sym}</div><div class="name">${a.name}</div></div>
+    return `<div class="row${a.sym===sel?' sel':''}" data-s="${a.sym}" tabindex="0" role="button"><div><div class="sym">${a.sym}</div><div class="name">${a.name}</div></div>
       <div class="price">${fmt(p,cur)}</div>
       <div class="chg ${cls}">${ch==null?"":(ch>=0?"▲ ":"▼ ")+Math.abs(ch).toFixed(2)+"% 24h"}</div></div>`;
   }).join("");
@@ -103,18 +121,104 @@ async function loadStocks(){
 async function loadFX(){
   try{
     const j = await getJSON("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,CZK");
-    fx.EUR=j.rates.EUR; fx.CZK=j.rates.CZK; updated.f=Date.now();
+    fx.EUR=j.rates.EUR; fx.CZK=j.rates.CZK; updated.f=Date.now(); drawChart();
   }catch(e){updated.err="FX feed failed ("+e.message+"). Retrying.";}
   render();
 }
 
-document.querySelectorAll(".sw button").forEach(b=>b.onclick=()=>{
+document.querySelectorAll("#cur button").forEach(b=>b.onclick=()=>{
   cur=b.dataset.c;
-  document.querySelectorAll(".sw button").forEach(x=>x.setAttribute("aria-pressed",x===b));
-  render();
+  document.querySelectorAll("#cur button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  render(); drawChart();
 });
+document.querySelectorAll("#rng button").forEach(b=>b.onclick=()=>{
+  range=b.dataset.r;
+  document.querySelectorAll("#rng button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  loadSeries();
+});
+const pick=e=>{const r=e.target.closest(".row");if(r){sel=r.dataset.s;render();loadSeries();}};
+document.getElementById("list").addEventListener("click",pick);
+document.getElementById("list").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();pick(e);}});
+
+// ---------- Charts ----------
+let sel="BTC", range="1D", series=[], cmsg="", cache={};
+const STK_MAP={"1H":{i:"1min",n:60},"1D":{i:"5min",n:78},"1W":{i:"1h",n:35},"1M":{i:"1day",n:22},"1Y":{i:"1day",n:252}};
+const CG_DAYS={"1H":1,"1D":1,"1W":7,"1M":30,"1Y":365};
+
+async function fetchSeries(){
+  const c=CRYPTO.find(x=>x.sym===sel);
+  if(c){
+    const j=await getJSON(`https://api.coingecko.com/api/v3/coins/${c.id}/market_chart?vs_currency=usd&days=${CG_DAYS[range]}`);
+    let pts=j.prices.map(([t,p])=>({t,p}));
+    if(range==="1H"){const lim=Date.now()-3600000;pts=pts.filter(x=>x.t>=lim);}
+    return pts;
+  }
+  if(TWELVE_KEY.startsWith("PASTE")) throw new Error("Add your Twelve Data key in index.html to show stock charts.");
+  const m=STK_MAP[range];
+  const j=await getJSON(`https://api.twelvedata.com/time_series?symbol=${sel}&interval=${m.i}&outputsize=${m.n}&apikey=${TWELVE_KEY}`);
+  if(!j.values) throw new Error(j.message||"No stock data returned.");
+  return j.values.map(v=>({t:new Date(v.datetime.replace(" ","T")).getTime(),p:+v.close})).reverse();
+}
+async function loadSeries(){
+  const key=sel+range, hit=cache[key];
+  if(hit&&Date.now()-hit.at<60000){series=hit.pts;cmsg="";return drawChart();}
+  series=[];cmsg="Loading chart…";drawChart();
+  const mine=key;
+  try{
+    const pts=await fetchSeries();
+    cache[key]={at:Date.now(),pts};
+    if(sel+range!==mine)return;
+    series=pts;cmsg=pts.length?"":"No data for this range (market may be closed).";
+  }catch(e){ if(sel+range!==mine)return; series=[];cmsg=e.message; }
+  drawChart();
+}
+function drawChart(){
+  const cv=document.getElementById("cv"), rate=fx[cur];
+  document.getElementById("ct").textContent=sel;
+  if(!series.length||!rate){cv.innerHTML=`<div class="cmsg">${cmsg||"Loading chart…"}</div>`;
+    document.getElementById("cp").textContent="";document.getElementById("cc").textContent="";return;}
+  const pts=series.map(x=>({t:x.t,p:x.p*rate}));
+  const W=700,H=260,L=8,R=70,T=10,B=26,iw=W-L-R,ih=H-T-B;
+  const t0=pts[0].t,t1=pts[pts.length-1].t||t0+1;
+  let lo=Math.min(...pts.map(x=>x.p)),hi=Math.max(...pts.map(x=>x.p));
+  if(hi===lo){hi+=1;lo-=1;} const pad=(hi-lo)*.08;lo-=pad;hi+=pad;
+  const X=t=>L+(t1===t0?0:(t-t0)/(t1-t0)*iw), Y=p=>T+(1-(p-lo)/(hi-lo))*ih;
+  const first=pts[0].p,last=pts[pts.length-1].p,up=last>=first;
+  const col=up?"var(--up)":"var(--down)";
+  const line=pts.map((x,i)=>(i?"L":"M")+X(x.t).toFixed(1)+" "+Y(x.p).toFixed(1)).join("");
+  const area=line+`L${X(t1)} ${T+ih}L${X(t0)} ${T+ih}Z`;
+  const short=v=>new Intl.NumberFormat(cur==="CZK"?"cs-CZ":"en-GB",{maximumFractionDigits:v<1?4:v<100?2:0}).format(v);
+  let grid="";
+  for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Y(v);
+    grid+=`<line x1="${L}" x2="${L+iw}" y1="${y}" y2="${y}" stroke="var(--line)"/><text x="${W-R+8}" y="${y+4}" font-size="11" fill="var(--mute)">${short(v)}</text>`;}
+  const dopt=range==="1Y"||range==="1M"?{day:"numeric",month:"short"}:range==="1W"?{weekday:"short",day:"numeric"}:{hour:"2-digit",minute:"2-digit"};
+  let xl="";
+  for(let i=0;i<=4;i++){const t=t0+(t1-t0)*i/4;
+    xl+=`<text x="${L+iw*i/4}" y="${H-6}" font-size="11" fill="var(--mute)" text-anchor="${i===0?"start":i===4?"end":"middle"}">${new Date(t).toLocaleString("en-GB",dopt)}</text>`;}
+  cv.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${sel} price chart, ${range}">
+    ${grid}${xl}<path d="${area}" fill="${col}" opacity=".12"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"/>
+    <line id="xh" y1="${T}" y2="${T+ih}" stroke="var(--mute)" stroke-dasharray="3 3" visibility="hidden"/>
+    <circle id="dot" r="4" fill="${col}" visibility="hidden"/></svg><div class="tip" id="tip" hidden></div>`;
+  const ch=(last-first)/first*100, cc=document.getElementById("cc");
+  document.getElementById("cp").textContent=fmt(last,cur);
+  cc.textContent=(up?"▲ ":"▼ ")+Math.abs(ch).toFixed(2)+"% ("+range+")";cc.className=up?"up":"down";
+  const svg=cv.querySelector("svg"),tip=document.getElementById("tip"),xh=document.getElementById("xh"),dot=document.getElementById("dot");
+  const show=e=>{
+    const r=svg.getBoundingClientRect(),px=(e.clientX-r.left)/r.width*W;
+    const tt=t0+Math.min(1,Math.max(0,(px-L)/iw))*(t1-t0);
+    let best=pts[0];for(const x of pts)if(Math.abs(x.t-tt)<Math.abs(best.t-tt))best=x;
+    const cx=X(best.t),cy=Y(best.p);
+    xh.setAttribute("x1",cx);xh.setAttribute("x2",cx);xh.setAttribute("visibility","visible");
+    dot.setAttribute("cx",cx);dot.setAttribute("cy",cy);dot.setAttribute("visibility","visible");
+    tip.hidden=false;tip.style.left=Math.min(Math.max(cx/W*r.width,60),r.width-60)+"px";
+    tip.textContent=fmt(best.p,cur)+" · "+new Date(best.t).toLocaleString("en-GB",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+  };
+  svg.addEventListener("pointermove",show);svg.addEventListener("pointerdown",show);
+  svg.addEventListener("pointerleave",()=>{tip.hidden=true;xh.setAttribute("visibility","hidden");dot.setAttribute("visibility","hidden");});
+}
 
 render();
+loadSeries();
 loadFX(); loadCrypto(); loadStocks();
 setInterval(loadCrypto,CRYPTO_MS);
 setInterval(loadStocks,STOCK_MS);
