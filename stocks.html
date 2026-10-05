@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Prices</title>
+<style>
+:root{--bg:#f3f5f4;--card:#fff;--ink:#14201b;--mute:#6b7a73;--line:#dde3e0;--up:#0d8a4e;--down:#c2352b;--acc:#16423a}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1412;--card:#142019;--ink:#e8efeb;--mute:#8fa097;--line:#25352d;--up:#3ecf8e;--down:#ff7a6e;--acc:#7fd6bd}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px;margin-bottom:22px}
+h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
+.sw{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.sw button{border:0;background:var(--card);color:var(--mute);padding:8px 16px;font:600 14px inherit;cursor:pointer}
+.sw button[aria-pressed=true]{background:var(--acc);color:var(--bg)}
+.sw button:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+.row{display:grid;grid-template-columns:1.3fr 1.2fr 1fr;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:10px}
+.sym{font:600 18px Georgia,serif}.name{color:var(--mute);font-size:13px}
+.price{font:600 22px ui-monospace,Consolas,monospace;text-align:right}
+.chg{text-align:right;font-weight:600;font-size:14px}
+.up{color:var(--up)}.down{color:var(--down)}
+.meta{color:var(--mute);font-size:13px;margin-top:14px}
+.err{color:var(--down)}
+@media(max-width:520px){.row{grid-template-columns:1fr 1fr}.chg{grid-column:1/-1;text-align:left}}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Live Prices</h1>
+  <div class="sw" role="group" aria-label="Currency">
+    <button data-c="USD" aria-pressed="true">USD</button>
+    <button data-c="EUR" aria-pressed="false">EUR</button>
+    <button data-c="CZK" aria-pressed="false">CZK</button>
+  </div>
+</header>
+<div id="list"></div>
+<p class="meta" id="meta">Loading…</p>
+</main>
+<script>
+// ====== CONFIG: edit here ======
+const FINNHUB_KEY = "db1jr71r01qhkqhbqehgdb1jr71r01qhkqhbqei0"; // free at finnhub.io
+const CRYPTO = [ // id = CoinGecko id
+  {sym:"BTC", name:"Bitcoin",  id:"bitcoin"},
+  {sym:"ETH", name:"Ethereum", id:"ethereum"},
+  {sym:"SOL", name:"Solana",   id:"solana"}
+];
+const STOCKS = [ // sym = Finnhub ticker (prices in USD)
+  {sym:"QXO", name:"QXO, Inc."}  // change to your exact ticker
+];
+const CRYPTO_MS = 30000, STOCK_MS = 60000, FX_MS = 3600000;
+// ================================
+
+let cur = "USD", fx = {USD:1,EUR:null,CZK:null};
+const data = {}; // sym -> {usd, chg, kind}
+let updated = {};
+
+const fmt = (v,c) => v==null ? "—" : new Intl.NumberFormat(c==="CZK"?"cs-CZ":"en-GB",
+  {style:"currency",currency:c,maximumFractionDigits:v<1?4:2}).format(v);
+
+function render(){
+  const list = document.getElementById("list");
+  list.innerHTML = [...CRYPTO,...STOCKS].map(a=>{
+    const d = data[a.sym]||{};
+    const rate = fx[cur];
+    const p = d.usd!=null && rate ? d.usd*rate : null;
+    const ch = d.chg;
+    const cls = ch==null ? "" : ch>=0 ? "up" : "down";
+    return `<div class="row"><div><div class="sym">${a.sym}</div><div class="name">${a.name}</div></div>
+      <div class="price">${fmt(p,cur)}</div>
+      <div class="chg ${cls}">${ch==null?"":(ch>=0?"▲ ":"▼ ")+Math.abs(ch).toFixed(2)+"% 24h"}</div></div>`;
+  }).join("");
+  const t = x => x ? new Date(x).toLocaleTimeString() : "…";
+  document.getElementById("meta").innerHTML =
+    `Crypto: ${t(updated.c)} · Stocks: ${t(updated.s)} · FX (ECB): ${t(updated.f)}` +
+    (updated.err ? `<br><span class="err">${updated.err}</span>` : "");
+}
+
+async function getJSON(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json();}
+
+async function loadCrypto(){
+  try{
+    const ids = CRYPTO.map(c=>c.id).join(",");
+    const j = await getJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+    CRYPTO.forEach(c=>{ if(j[c.id]) data[c.sym]={usd:j[c.id].usd,chg:j[c.id].usd_24h_change}; });
+    updated.c=Date.now(); updated.err=null;
+  }catch(e){updated.err="Crypto feed failed ("+e.message+"). Retrying.";}
+  render();
+}
+async function loadStocks(){
+  if(FINNHUB_KEY.startsWith("PASTE")){updated.err="Add your Finnhub key in index.html to enable stocks.";render();return;}
+  try{
+    await Promise.all(STOCKS.map(async s=>{
+      const q = await getJSON(`https://finnhub.io/api/v1/quote?symbol=${s.sym}&token=${FINNHUB_KEY}`);
+      if(q.c) data[s.sym]={usd:q.c,chg:q.dp};
+    }));
+    updated.s=Date.now();
+  }catch(e){updated.err="Stock feed failed ("+e.message+"). Retrying.";}
+  render();
+}
+async function loadFX(){
+  try{
+    const j = await getJSON("https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,CZK");
+    fx.EUR=j.rates.EUR; fx.CZK=j.rates.CZK; updated.f=Date.now();
+  }catch(e){updated.err="FX feed failed ("+e.message+"). Retrying.";}
+  render();
+}
+
+document.querySelectorAll(".sw button").forEach(b=>b.onclick=()=>{
+  cur=b.dataset.c;
+  document.querySelectorAll(".sw button").forEach(x=>x.setAttribute("aria-pressed",x===b));
+  render();
+});
+
+render();
+loadFX(); loadCrypto(); loadStocks();
+setInterval(loadCrypto,CRYPTO_MS);
+setInterval(loadStocks,STOCK_MS);
+setInterval(loadFX,FX_MS);
+</script>
+</body>
+</html>
