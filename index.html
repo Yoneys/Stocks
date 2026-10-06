@@ -58,7 +58,7 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
 </main>
 <script>
 // ====== CONFIG: edit here ======
-const FINNHUB_KEY = "db1jr71r01qhkqhbqehgdb1jr71r01qhkqhbqei0"; // free at finnhub.io
+const FINNHUB_KEY = "PASTE_YOUR_FINNHUB_KEY_HERE"; // free at finnhub.io
 const TWELVE_KEY = "PASTE_YOUR_TWELVEDATA_KEY_HERE"; // free at twelvedata.com (stock history)
 const CRYPTO = [ // id = CoinGecko id
   {sym:"BTC", name:"Bitcoin",  id:"bitcoin",  bn:"BTCUSDT"},
@@ -144,21 +144,28 @@ document.getElementById("list").addEventListener("keydown",e=>{if(e.key==="Enter
 let sel="BTC", range="1D", series=[], cmsg="", cache={};
 const STK_MAP={"1H":{i:"1min",n:60},"1D":{i:"5min",n:78},"1W":{i:"1h",n:35},"1M":{i:"1day",n:22},"1Y":{i:"1day",n:252}};
 const BN_MAP={"1H":{i:"1m",n:60},"1D":{i:"5m",n:288},"1W":{i:"1h",n:168},"1M":{i:"4h",n:180},"1Y":{i:"1d",n:365}};
+const CB_MAP={"1H":{g:60,n:60},"1D":{g:300,n:288},"1W":{g:3600,n:168},"1M":{g:21600,n:120},"1Y":{g:86400,n:300}};
 const CG_DAYS={"1H":1,"1D":1,"1W":7,"1M":30,"1Y":365};
 
 async function fetchSeries(){
   const c=CRYPTO.find(x=>x.sym===sel);
   if(c){
-    const b=BN_MAP[range];
-    try{ // Binance public market data (no key, CORS enabled); USDT ~ USD
-      const k=await getJSON(`https://data-api.binance.vision/api/v3/klines?symbol=${c.bn}&interval=${b.i}&limit=${b.n}`);
-      return k.map(x=>({t:x[0],p:+x[4]}));
-    }catch(e){ // fallback: CoinGecko
-      const j=await getJSON(`https://api.coingecko.com/api/v3/coins/${c.id}/market_chart?vs_currency=usd&days=${CG_DAYS[range]}`);
-      let pts=j.prices.map(([t,p])=>({t,p}));
-      if(range==="1H"){const lim=Date.now()-3600000;pts=pts.filter(x=>x.t>=lim);}
-      return pts;
+    const b=BN_MAP[range], cb=CB_MAP[range], errs=[];
+    const sources=[
+      async()=>{const k=await getJSON(`https://data-api.binance.vision/api/v3/klines?symbol=${c.bn}&interval=${b.i}&limit=${b.n}`);
+        return k.map(x=>({t:x[0],p:+x[4]}));},
+      async()=>{const k=await getJSON(`https://api.exchange.coinbase.com/products/${c.sym}-USD/candles?granularity=${cb.g}`);
+        return k.slice(0,cb.n).reverse().map(x=>({t:x[0]*1000,p:+x[4]}));},
+      async()=>{const j=await getJSON(`https://api.coingecko.com/api/v3/coins/${c.id}/market_chart?vs_currency=usd&days=${CG_DAYS[range]}`);
+        let pts=j.prices.map(([t,p])=>({t,p}));
+        if(range==="1H"){const lim=Date.now()-3600000;pts=pts.filter(x=>x.t>=lim);}
+        return pts;}
+    ];
+    for(const [i,f] of sources.entries()){
+      try{const pts=await f(); if(pts.length) return pts; errs.push(["Binance","Coinbase","CoinGecko"][i]+": empty");}
+      catch(e){errs.push(["Binance","Coinbase","CoinGecko"][i]+": "+e.message);}
     }
+    throw new Error("All chart sources failed — "+errs.join(" | "));
   }
   if(TWELVE_KEY.startsWith("PASTE")) throw new Error("Add your Twelve Data key in index.html to show stock charts.");
   const m=STK_MAP[range];
