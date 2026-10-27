@@ -4,16 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Live Prices</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{--bg:#f3f5f4;--card:#fff;--ink:#14201b;--mute:#6b7a73;--line:#dde3e0;--up:#0d8a4e;--down:#c2352b;--acc:#16423a}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1412;--card:#142019;--ink:#e8efeb;--mute:#8fa097;--line:#25352d;--up:#3ecf8e;--down:#ff7a6e;--acc:#7fd6bd}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
-main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+main{max-width:1180px;margin:0 auto;padding:28px 18px 60px}
 header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px;margin-bottom:22px}
 h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
 .sw{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.sw button{border:0;background:var(--card);color:var(--mute);padding:8px 16px;font:600 14px inherit;cursor:pointer}
+.sw button{border:0;background:var(--card);color:var(--mute);padding:8px 16px;font-weight:600;font-size:14px;font-family:inherit;cursor:pointer}
 .sw button[aria-pressed=true]{background:var(--acc);color:var(--bg)}
 .sw button:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 .row{display:grid;grid-template-columns:1.3fr 1.2fr 1fr;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:10px}
@@ -23,6 +24,21 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
 .up{color:var(--up)}.down{color:var(--down)}
 .meta{color:var(--mute);font-size:13px;margin-top:14px}
 .err{color:var(--down)}
+.layout{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;position:sticky;top:16px}
+.ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.ph h2{margin:0;font:600 20px Georgia,serif}
+.btn{border:0;background:var(--acc);color:var(--bg);padding:8px 14px;border-radius:8px;font-weight:600;font-size:14px;font-family:inherit;cursor:pointer}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+input,select{width:100%;padding:9px 10px;margin-bottom:8px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);font:inherit}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#tot{padding:6px 0 12px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.tv{font:600 26px ui-monospace,Consolas,monospace}
+.ar{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:2px 10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.ar[data-s]{cursor:pointer}.ar small,#tot small{color:var(--mute)}.ar .r{text-align:right}
+.am{font-size:13px;color:var(--mute);margin:0 0 8px}p.am.err{color:var(--down)}
+.del{border:0;background:none;color:var(--mute);cursor:pointer;font-size:16px;padding:4px}
+.del:hover{color:var(--down)}
+@media(max-width:820px){.layout{grid-template-columns:1fr}.panel{position:static}}
 .row{cursor:pointer}.row.sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}
 .row:focus-visible{outline:2px solid var(--acc)}
 .chart{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:14px}
@@ -44,6 +60,23 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
     <button data-c="CZK" aria-pressed="false">CZK</button>
   </div>
 </header>
+<div class="layout">
+<aside class="panel" aria-label="My assets">
+  <div class="ph"><h2>My Assets</h2><button class="btn" id="addBtn" type="button">+ Add</button></div>
+  <div id="auth"></div>
+  <p class="am err" id="amsg" role="status"></p>
+  <form id="addf" hidden>
+    <input id="fn" list="syms" placeholder="Symbol or name (e.g. BTC)" autocomplete="off" required>
+    <datalist id="syms"></datalist>
+    <div class="two"><input id="fq" type="number" step="any" min="0" placeholder="Amount" required>
+    <input id="fb" type="number" step="any" min="0" placeholder="Buy price / unit" required></div>
+    <select id="fc" aria-label="Buy price currency"><option>USD</option><option>EUR</option><option>CZK</option></select>
+    <div class="two"><button class="btn" type="submit">Save</button><button class="btn ghost" type="button" id="fcancel">Cancel</button></div>
+  </form>
+  <div id="tot"></div>
+  <div id="alist"></div>
+</aside>
+<div class="right">
 <section class="chart">
   <div class="ch-head"><div><span id="ct"></span><span id="cp"></span><span id="cc"></span></div>
   <div class="sw" id="rng" role="group" aria-label="Time range">
@@ -53,13 +86,18 @@ h1{margin:0;font:600 26px Georgia,serif;letter-spacing:-.01em}
   </div></div>
   <div id="cv"></div>
 </section>
+<input id="q" type="search" placeholder="Search assets…" aria-label="Search assets">
 <div id="list"></div>
 <p class="meta" id="meta">Loading…</p>
+</div>
+</div>
 </main>
 <script>
 // ====== CONFIG: edit here ======
 const FINNHUB_KEY = "PASTE_YOUR_FINNHUB_KEY_HERE"; // free at finnhub.io
 const TWELVE_KEY = "PASTE_YOUR_TWELVEDATA_KEY_HERE"; // free at twelvedata.com (stock history)
+const SB_URL = "https://tjtksizmiykbgfxssnag.supabase.co";      // e.g. https://abcd1234.supabase.co
+const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRqdGtzaXptaXlrYmdmeHNzbmFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMwODg5NzIsImV4cCI6MjEwODY2NDk3Mn0.uY4zgza03558OCQYav2AwJSn5rE2AFVvtwcRIM27DzY"; // the public "anon" key
 const CRYPTO = [ // id = CoinGecko id
   {sym:"BTC", name:"Bitcoin",  id:"bitcoin",  bn:"BTCUSDT"},
   {sym:"ETH", name:"Ethereum", id:"ethereum", bn:"ETHUSDT"},
@@ -79,8 +117,10 @@ const fmt = (v,c) => v==null ? "—" : new Intl.NumberFormat(c==="CZK"?"cs-CZ":"
   {style:"currency",currency:c,maximumFractionDigits:v<1?4:2}).format(v);
 
 function render(){
+  renderMine();
   const list = document.getElementById("list");
-  list.innerHTML = [...CRYPTO,...STOCKS].map(a=>{
+  const shown=[...CRYPTO,...STOCKS].filter(a=>(a.sym+" "+a.name).toLowerCase().includes(q));
+  list.innerHTML = !shown.length ? '<p class="meta">No assets match your search.</p>' : shown.map(a=>{
     const d = data[a.sym]||{};
     const rate = fx[cur];
     const p = d.usd!=null && rate ? d.usd*rate : null;
@@ -231,8 +271,122 @@ function drawChart(){
   svg.addEventListener("pointerleave",()=>{tip.hidden=true;xh.setAttribute("visibility","hidden");dot.setAttribute("visibility","hidden");});
 }
 
+// ---------- My assets ----------
+let q="";
+const readLocal=()=>{try{return JSON.parse(localStorage.getItem("myAssets")||"[]");}catch(e){return[];}};
+let mine=readLocal().map((x,i)=>({id:"l"+i,...x}));
+const saveMine=()=>{try{localStorage.setItem("myAssets",JSON.stringify(mine));}catch(e){}};
+const sb=(window.supabase&&!SB_URL.startsWith("PASTE"))?window.supabase.createClient(SB_URL,SB_KEY):null;
+let user=null;
+const authMsg=t=>{document.getElementById("amsg").textContent=t||"";};
+const cloud=()=>!!(sb&&user);
+const allA=()=>[...CRYPTO,...STOCKS];
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtN=n=>new Intl.NumberFormat("en-GB",{maximumFractionDigits:6}).format(n);
+function renderMine(){
+  const tot=document.getElementById("tot"), al=document.getElementById("alist"), rate=fx[cur];
+  if(!mine.length){tot.innerHTML="<small>No assets yet. Press “+ Add” to enter your first holding.</small>";al.innerHTML="";return;}
+  let totVal=0, tVal=0, tCost=0;
+  al.innerHTML=mine.map((m,i)=>{
+    const a=allA().find(x=>x.sym===m.sym), d=a&&data[a.sym], bx=fx[m.ccy];
+    const buyUsd=bx?m.buy/bx:null;
+    let val=null, pl=null;
+    if(a){ if(d&&d.usd!=null){val=m.qty*d.usd; if(buyUsd>0){pl=(d.usd-buyUsd)/buyUsd*100;tVal+=val;tCost+=m.qty*buyUsd;}} }
+    else if(buyUsd!=null) val=m.qty*buyUsd;
+    if(val!=null) totVal+=val;
+    const sub=`${fmtN(m.qty)} × ${fmtN(m.buy)} ${m.ccy}`+(a?"":" · not tracked");
+    const right=pl==null?`<small>${a?"loading…":"no live price"}</small>`
+      :`<span class="${pl>=0?"up":"down"}">${pl>=0?"▲ +":"▼ "}${pl.toFixed(2)}%</span>`;
+    return `<div class="ar"${a?` data-s="${a.sym}"`:""}><div><b>${esc(m.sym)}</b><br><small>${esc(sub)}</small></div>
+      <div class="r"><b>${val==null||!rate?"—":fmt(val*rate,cur)}</b><br>${right}</div>
+      <button class="del" data-del="${i}" aria-label="Remove ${esc(m.sym)}">✕</button></div>`;
+  }).join("");
+  const tp=tCost>0?(tVal-tCost)/tCost*100:null;
+  tot.innerHTML=`<small>Total value</small><div class="tv">${rate?fmt(totVal*rate,cur):"—"}</div>`+
+    (tp==null?"":`<small>Profit on tracked assets: </small><b class="${tp>=0?"up":"down"}">${tp>=0?"▲ +":"▼ "}${tp.toFixed(2)}%</b>`);
+}
+document.getElementById("syms").innerHTML=allA().map(a=>`<option value="${a.sym}">${a.name}</option>`).join("");
+document.getElementById("q").addEventListener("input",e=>{q=e.target.value.toLowerCase().trim();render();});
+const addf=document.getElementById("addf");
+document.getElementById("addBtn").onclick=()=>{addf.hidden=!addf.hidden;if(!addf.hidden){document.getElementById("fc").value=cur;document.getElementById("fn").focus();}};
+document.getElementById("fcancel").onclick=()=>{addf.reset();addf.hidden=true;};
+addf.onsubmit=async e=>{
+  e.preventDefault();
+  const raw=document.getElementById("fn").value.trim(), key=raw.toLowerCase();
+  const qty=+document.getElementById("fq").value, buy=+document.getElementById("fb").value;
+  if(!raw||!(qty>0)||!(buy>=0))return;
+  const a=allA().find(x=>x.sym.toLowerCase()===key||x.name.toLowerCase()===key);
+  const item={sym:a?a.sym:raw,qty,buy,ccy:document.getElementById("fc").value};
+  authMsg("");
+  if(cloud()){
+    const {data:r,error}=await sb.from("assets").insert(item).select().single();
+    if(error){authMsg("Could not save: "+error.message);return;}
+    item.id=r.id;
+  }else item.id="l"+Date.now();
+  mine.push(item); if(!cloud())saveMine();
+  addf.reset();addf.hidden=true;renderMine();
+};
+document.getElementById("alist").addEventListener("click",async e=>{
+  const d=e.target.closest(".del");
+  if(d){
+    const i=+d.dataset.del, it=mine[i]; if(!it)return;
+    if(cloud()){const {error}=await sb.from("assets").delete().eq("id",it.id);
+      if(error){authMsg("Could not delete: "+error.message);return;}}
+    mine.splice(i,1); if(!cloud())saveMine(); renderMine(); return;
+  }
+  const r=e.target.closest(".ar[data-s]");
+  if(r){sel=r.dataset.s;render();loadSeries();}
+});
+
+// ---------- Cloud sync (Supabase) ----------
+async function loadMine(){
+  if(cloud()){
+    const {data:rows,error}=await sb.from("assets").select("*").order("created_at");
+    if(error){authMsg("Could not load: "+error.message);return;}
+    let list=rows; const loc=readLocal();
+    if(!rows.length&&loc.length){ // first login: move this device's assets to the cloud
+      const {data:ins,error:e2}=await sb.from("assets").insert(loc.map(({sym,qty,buy,ccy})=>({sym,qty,buy,ccy}))).select();
+      if(e2)authMsg("Could not upload local assets: "+e2.message);
+      else{list=ins;try{localStorage.removeItem("myAssets");}catch(_){}}
+    }
+    mine=list.map(r=>({id:r.id,sym:r.sym,qty:+r.qty,buy:+r.buy,ccy:r.ccy}));
+  }else mine=readLocal().map((x,i)=>({id:"l"+i,...x}));
+  renderMine();
+}
+function renderAuth(){
+  const el=document.getElementById("auth");
+  if(!sb){el.innerHTML='<p class="am">Cloud sync is off: assets are saved on this device only.</p>';return;}
+  if(user){el.innerHTML=`<p class="am">Synced as <b>${esc(user.email)}</b></p><button class="btn ghost" id="so" type="button" style="margin-bottom:10px">Sign out</button>`;return;}
+  el.innerHTML=`<p class="am">Sign in to sync your assets across devices.</p>
+    <input id="ae" type="email" placeholder="Email" autocomplete="email">
+    <input id="ap" type="password" placeholder="Password (min 6 characters)" autocomplete="current-password">
+    <div class="two"><button class="btn" id="si" type="button">Sign in</button><button class="btn ghost" id="su" type="button">Create account</button></div>`;
+}
+document.getElementById("auth").addEventListener("click",async e=>{
+  if(!sb)return; const id=e.target.id;
+  if(id==="so"){await sb.auth.signOut();return;}
+  if(id==="si"||id==="su"){
+    const email=document.getElementById("ae").value.trim(), password=document.getElementById("ap").value;
+    authMsg("");
+    if(!email||password.length<6){authMsg("Enter an email and a password of at least 6 characters.");return;}
+    const {data,error}=await (id==="si"?sb.auth.signInWithPassword({email,password}):sb.auth.signUp({email,password}));
+    if(error){authMsg(error.message);return;}
+    if(id==="su"&&!data.session)authMsg("Account created. Check your email to confirm, then sign in.");
+  }
+});
+async function initAuth(){
+  renderAuth(); if(!sb)return;
+  const {data}=await sb.auth.getSession(); user=data.session?data.session.user:null;
+  renderAuth(); await loadMine();
+  sb.auth.onAuthStateChange((_ev,sess)=>{
+    const u=sess?sess.user:null;
+    if((u&&u.id)!==(user&&user.id)){user=u;authMsg("");renderAuth();loadMine();}
+  });
+}
+
 render();
 loadSeries();
+initAuth();
 loadFX(); loadCrypto(); loadStocks();
 setInterval(loadCrypto,CRYPTO_MS);
 setInterval(loadStocks,STOCK_MS);
